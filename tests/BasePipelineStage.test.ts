@@ -27,6 +27,28 @@ class ConditionalDoubleStage extends BaseConditionalPipelineStage<TestMessage> {
 	}
 }
 
+class FailingStage extends BasePipelineStage<TestMessage> {
+	protected async executePipelineStep(
+		_message: TestMessage,
+		_resolve: (output?: TestMessage | PromiseLike<TestMessage>) => void,
+		reject: (reason: unknown) => void,
+	): Promise<void> {
+		reject(new Error("step failure"));
+	}
+}
+
+class FailingConditionalStage extends BaseConditionalPipelineStage<TestMessage> {
+	protected matchCallback: IMatchCallback<TestMessage> = () => true;
+
+	protected async executePipelineStep(
+		_message: TestMessage,
+		_resolve: (output?: TestMessage | PromiseLike<TestMessage>) => void,
+		reject: (reason: unknown) => void,
+	): Promise<void> {
+		reject(new Error("conditional step failure"));
+	}
+}
+
 describe("BasePipelineStage", () => {
 	it("wraps executePipelineStep into a runnable PipelineTask", async () => {
 		const pipeline = new Pipeline<TestMessage>();
@@ -35,6 +57,13 @@ describe("BasePipelineStage", () => {
 		const result = await pipeline.run(new TestMessage(1));
 
 		expect(result.value).toBe(2);
+	});
+
+	it("propagates a rejection raised inside executePipelineStep", async () => {
+		const pipeline = new Pipeline<TestMessage>();
+		pipeline.pipe(new FailingStage().getPipelineTask("failing"));
+
+		await expect(pipeline.run(new TestMessage())).rejects.toThrow("step failure");
 	});
 });
 
@@ -55,5 +84,12 @@ describe("BaseConditionalPipelineStage", () => {
 		const result = await pipeline.run(new TestMessage(-3));
 
 		expect(result.value).toBe(-3);
+	});
+
+	it("propagates a rejection raised inside a matching conditional step", async () => {
+		const pipeline = new Pipeline<TestMessage>();
+		pipeline.pipe(new FailingConditionalStage().getPipelineFilter("failing"));
+
+		await expect(pipeline.run(new TestMessage(1))).rejects.toThrow("conditional step failure");
 	});
 });

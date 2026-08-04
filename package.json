@@ -2,7 +2,6 @@
   "name": "dirama",
   "version": "0.0.1",
   "description": "Zero-dependency, framework-agnostic pipeline-engine for TypeScript",
-  "main": "index.js",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/matteoPhre/dirama.git"
@@ -15,6 +14,17 @@
     "access": "public"
   },
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
