@@ -15,22 +15,11 @@ export class SubPipeline<T extends IBaseMessage> extends Pipeline<T> {
     this.parentNext = parentNext;
   }
 
-  protected end(
-    input: T,
-    resolve: (value: T | PromiseLike<T>) => void,
-    reject: (reason: unknown) => void,
-  ): void {
+  protected end(input: T): Promise<T> {
     if (typeof this.parentNext !== "function") {
-      resolve(input);
-      return;
+      return Promise.resolve(input);
     }
 
-    this.parentNext(input)
-      .then((resolved) => {
-        resolve(resolved);
-      })
-      .catch((reason) => {
-        reject(reason);
-      });
+    return this.parentNext(input);
   }
 }
