@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "lib": ["ES2022", "DOM"],
+    "moduleResolution": "Bundler",
+    "declaration": true,
+    "outDir": "dist",
+    "rootDir": ".",
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "types": ["node", "vitest/globals"],
+    "paths": {
+      "@matteophre/pagina-me": ["./src/index.ts"],
+      "@matteophre/pagina-me/contracts": ["./src/contracts.ts"]
+    }
+  },
+  "include": ["src", "tests", "examples"],
+  "exclude": ["dist", "node_modules", "tests/edge"]
+}

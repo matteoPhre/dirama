@@ -1,0 +1,35 @@
+{
+  "name": "dirama",
+  "version": "0.0.1",
+  "description": "Zero-dependency, framework-agnostic pipeline-engine for TypeScript",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/matteoPhre/dirama.git"
+  },
+  "homepage": "https://github.com/matteoPhre/dirama#readme",
+  "bugs": {
+    "url": "https://github.com/matteoPhre/dirama/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "@types/node": "^22.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.0.0",
+    "tsup": "^8.0.0",
+    "vitest": "^4.1.10"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
