@@ -18,7 +18,9 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "type-check": "tsc --noEmit"
   },
   "devDependencies": {
     "typescript": "^5.9.3",
@@ -29,7 +31,13 @@
     "tsup": "^8.0.0",
     "vitest": "^4.1.10"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC"
+  "keywords": [
+    "pipeline",
+    "orchestration",
+    "middleware",
+    "typescript",
+    "async"
+  ],
+  "author": "matteoPhre",
+  "license": "MIT"
 }
