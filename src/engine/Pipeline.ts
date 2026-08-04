@@ -93,9 +93,7 @@ export class Pipeline<T extends IBaseMessage> implements IPipeline<T> {
    */
   protected next = (input: T): Promise<T> => {
     if (input.getExit()) {
-      return new Promise<T>((resolve, reject) => {
-        this.end(input, resolve, reject);
-      });
+      return this.end(input);
     }
 
     return new Promise<T>((resolve, reject) => {
@@ -122,7 +120,7 @@ export class Pipeline<T extends IBaseMessage> implements IPipeline<T> {
       }
 
       // End of pipeline
-      this.end(input, resolve, reject);
+      this.end(input).then(resolve).catch(reject);
     });
   };
 
@@ -132,11 +130,7 @@ export class Pipeline<T extends IBaseMessage> implements IPipeline<T> {
    * `next` call. Overridden by {@link SubPipeline} to hand control back to
    * a parent pipeline instead.
    */
-  protected end(
-    input: T,
-    resolve: (value: T | PromiseLike<T>) => void,
-    reject: (reason: unknown) => void,
-  ): void {
-    resolve(input);
+  protected end(input: T): Promise<T> {
+    return Promise.resolve(input);
   }
 }
