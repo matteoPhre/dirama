@@ -47,13 +47,13 @@ export class Pipeline<T extends IBaseMessage> implements IPipeline<T> {
     return this.stages;
   }
 
-  public pipe(stage: IStage<T>): Pipeline<T> {
+  public pipe(stage: IStage<T>): this {
     this.pushStage(stage);
 
     return this;
   }
 
-  public pipes(stages: IStage<T>[]): Pipeline<T> {
+  public pipes(stages: IStage<T>[]): this {
     stages.forEach((stage) => {
       this.pushStage(stage);
     });
