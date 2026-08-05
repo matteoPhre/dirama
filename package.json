@@ -1,6 +1,6 @@
 {
   "name": "@matteophre/dirama",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "Zero-dependency, framework-agnostic pipeline-engine for TypeScript",
   "repository": {
     "type": "git",
