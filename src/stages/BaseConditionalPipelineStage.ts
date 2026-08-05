@@ -23,8 +23,8 @@ export abstract class BaseConditionalPipelineStage<T extends IBaseMessage> {
     const filter = new PipelineFilter<T>(this.matchCallback, name, hooks);
 
     filter.pipe(
-      new PipelineTask<T>(async (message, resolve, reject) => {
-        await this.executePipelineStep(message, resolve, reject);
+      new PipelineTask<T>(async (message, resolve, reject, signal) => {
+        await this.executePipelineStep(message, resolve, reject, signal);
       }, name),
     );
 
@@ -35,5 +35,6 @@ export abstract class BaseConditionalPipelineStage<T extends IBaseMessage> {
     message: T,
     resolve: (output?: T | PromiseLike<T>) => void,
     reject: (reason: unknown) => void,
+    signal?: AbortSignal,
   ): Promise<void>;
 }

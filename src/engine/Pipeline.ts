@@ -2,6 +2,8 @@ import { IBaseMessage } from "../contracts/IBaseMessage.js";
 import { IStage } from "../contracts/IStage.js";
 import { IPipeline } from "../contracts/IPipeline.js";
 import { IPipelineHooks } from "../contracts/IPipelineHooks.js";
+import { IPipelineRunOptions } from "../contracts/IPipelineRunOptions.js";
+import { PipelineAbortError } from "../errors/PipelineAbortError.js";
 
 /**
  * Pipeline of stages executed in sequence.
@@ -26,6 +28,15 @@ export class Pipeline<T extends IBaseMessage> implements IPipeline<T> {
   private current: number = -1;
 
   private stages: Array<IStage<T>> = [];
+
+  /**
+   * Internal controller for the current run, aborted automatically once the
+   * run settles (resolves, rejects, or exits early) so long-running stages
+   * using {@link signal} can clean up.
+   */
+  private controller: AbortController = new AbortController();
+  private externalSignal?: AbortSignal;
+  private externalAbortListener?: () => void;
 
   constructor(hooks?: IPipelineHooks<T>) {
     this.hooks = hooks;
@@ -61,10 +72,17 @@ export class Pipeline<T extends IBaseMessage> implements IPipeline<T> {
     return this;
   }
 
-  public run(input: T): Promise<T> {
+  public run(input: T, options?: IPipelineRunOptions): Promise<T> {
     this.reset();
     this.resetInputExitState(input);
-    return this.next(input);
+    this.setupAbortController(options?.signal);
+
+    return this.next(input).finally(() => this.teardownAbortController());
+  }
+
+  /** Combined cancellation signal for the current run. */
+  protected get signal(): AbortSignal {
+    return this.controller.signal;
   }
 
   protected incrementCurrent(): void {
@@ -85,6 +103,33 @@ export class Pipeline<T extends IBaseMessage> implements IPipeline<T> {
     input.setExit(false);
   }
 
+  private setupAbortController(externalSignal?: AbortSignal): void {
+    this.controller = new AbortController();
+    this.externalSignal = externalSignal;
+
+    if (externalSignal === undefined) {
+      return;
+    }
+
+    if (externalSignal.aborted) {
+      this.controller.abort(externalSignal.reason);
+      return;
+    }
+
+    this.externalAbortListener = (): void => this.controller.abort(externalSignal.reason);
+    externalSignal.addEventListener("abort", this.externalAbortListener);
+  }
+
+  private teardownAbortController(): void {
+    if (this.externalSignal !== undefined && this.externalAbortListener !== undefined) {
+      this.externalSignal.removeEventListener("abort", this.externalAbortListener);
+    }
+
+    if (!this.controller.signal.aborted) {
+      this.controller.abort();
+    }
+  }
+
   /**
    * Call the next stage in the pipeline.
    *
@@ -94,6 +139,12 @@ export class Pipeline<T extends IBaseMessage> implements IPipeline<T> {
   protected next = (input: T): Promise<T> => {
     if (input.getExit()) {
       return this.end(input);
+    }
+
+    if (this.signal.aborted) {
+      const abortReason = this.buildAbortError();
+      this.hooks?.onError?.(this.getCurrentStage(), abortReason, input);
+      return Promise.reject(abortReason);
     }
 
     return new Promise<T>((resolve, reject) => {
@@ -115,7 +166,7 @@ export class Pipeline<T extends IBaseMessage> implements IPipeline<T> {
           reject(reason);
         };
 
-        currentStage.invoke(input, this.next, wrappedResolve, wrappedReject);
+        currentStage.invoke(input, this.next, wrappedResolve, wrappedReject, this.signal);
         return;
       }
 
@@ -123,6 +174,15 @@ export class Pipeline<T extends IBaseMessage> implements IPipeline<T> {
       this.end(input).then(resolve).catch(reject);
     });
   };
+
+  private buildAbortError(): PipelineAbortError {
+    const reason: unknown = this.controller.signal.reason;
+    if (reason instanceof PipelineAbortError) {
+      return reason;
+    }
+
+    return new PipelineAbortError(undefined, { cause: reason });
+  }
 
   /**
    * End the pipeline: acts as a "null stage" that immediately resolves with

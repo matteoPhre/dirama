@@ -1,4 +1,5 @@
 import { IStage } from "./IStage.js";
+import { IPipelineRunOptions } from "./IPipelineRunOptions.js";
 
 /**
  * Generic pipeline contract.
@@ -8,5 +9,5 @@ export interface IPipeline<T> {
 
   getStages(): IStage<T>[];
 
-  run(input: T): Promise<T>;
+  run(input: T, options?: IPipelineRunOptions): Promise<T>;
 }

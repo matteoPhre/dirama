@@ -18,6 +18,7 @@ As a processing flow (validation, enrichment, side-effects, notifications, etc.)
 - **`Filter`** (`PipelineFilter`) — a special `Stage` that evaluates a predicate (`IMatchCallback`) on the message: if the predicate is true, it runs a nested sub-pipeline (`SubPipeline`) of stages; otherwise it passes control directly to the next stage.
 - **`Task`** (`PipelineTask`) — the most common "leaf" `Stage`: it wraps a simple asynchronous callback (`IExecuteCallback`) that acts on the message.
 - **`ExecutionContext`** — an optional, strongly-typed `Message` implementation that carries a mutable `TState` payload plus baseline `IExecutionMetadata` (`requestId`, `timestamp`) across stages, without requiring type assertions (`as`).
+- **Cancellation** — `Pipeline.run` accepts an `AbortSignal`, forwarded to every stage, combined with an internal signal that aborts automatically once the run settles, so long-running work can clean up on early exit, timeout, or failure.
 
 ```mermaid
 flowchart LR
@@ -40,6 +41,7 @@ flowchart LR
   - [Defining a custom Stage](#defining-a-custom-stage)
   - [Defining a conditional filter](#defining-a-conditional-filter)
   - [Using ExecutionContext for typed state](#using-executioncontext-for-typed-state)
+  - [Cancellation with AbortSignal](#cancellation-with-abortsignal)
   - [Observability hooks](#observability-hooks)
 - [Available scripts](#available-scripts)
 - [License](#license)
@@ -239,6 +241,37 @@ const result = await pipeline.run(context);
 
 console.log(result.getState().total); // 122
 console.log(result.metadata.requestId); // unique per-run identifier
+```
+
+### Cancellation with AbortSignal
+
+`Pipeline.run` accepts an optional `{ signal }` and forwards it as the last argument to every stage's `invoke`/`IExecuteCallback`, so long-running work (e.g. `fetch`) can be tied to it. The pipeline also maintains its own internal signal, combined with the one you pass in, which aborts automatically once the run settles (resolves, rejects, or exits early) so stray async work gets cleaned up. If the signal is already aborted, or aborts mid-run, the pipeline stops advancing to further stages and rejects with a `PipelineAbortError` (its `cause` holds the original abort reason, if any):
+
+```typescript
+import { Pipeline, PipelineTask, PipelineAbortError } from "@matteophre/dirama";
+
+const fetchInventory = new PipelineTask<OrderMessage>(
+  async (message, resolve, reject, signal) => {
+    const response = await fetch("/api/inventory", { signal });
+    message.inventory = await response.json();
+    resolve(message);
+  },
+  "fetch-inventory",
+);
+
+const pipeline = new Pipeline<OrderMessage>();
+pipeline.pipe(fetchInventory);
+
+const controller = new AbortController();
+setTimeout(() => controller.abort(), 5000);
+
+try {
+  await pipeline.run(new OrderMessage(), { signal: controller.signal });
+} catch (error) {
+  if (error instanceof PipelineAbortError) {
+    console.error("Pipeline was cancelled:", error.cause);
+  }
+}
 ```
 
 ### Observability hooks

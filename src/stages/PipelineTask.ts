@@ -20,9 +20,10 @@ export class PipelineTask<T> implements IStage<T> {
     next: (input: T) => Promise<T>,
     resolve: (output?: T | PromiseLike<T>) => void,
     reject: (reason: unknown) => void,
+    signal?: AbortSignal,
   ): void {
     new Promise<T | undefined>((res, rej) => {
-      this.executeCallback(input, res, rej);
+      this.executeCallback(input, res, rej, signal);
     })
       .then((value) => next((value ?? input) as T))
       .then((value) => resolve(value))
