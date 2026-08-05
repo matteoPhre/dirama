@@ -9,8 +9,8 @@ import { PipelineTask } from "./PipelineTask.js";
  */
 export abstract class BasePipelineStage<T extends IBaseMessage> {
   public getPipelineTask(name: string): PipelineTask<T> {
-    return new PipelineTask<T>(async (message, resolve, reject) => {
-      await this.executePipelineStep(message, resolve, reject);
+    return new PipelineTask<T>(async (message, resolve, reject, signal) => {
+      await this.executePipelineStep(message, resolve, reject, signal);
     }, name);
   }
 
@@ -18,5 +18,6 @@ export abstract class BasePipelineStage<T extends IBaseMessage> {
     message: T,
     resolve: (output?: T | PromiseLike<T>) => void,
     reject: (reason: unknown) => void,
+    signal?: AbortSignal,
   ): Promise<void>;
 }
