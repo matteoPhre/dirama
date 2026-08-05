@@ -21,11 +21,13 @@ export interface IStage<T> {
    * @param next callback that invokes the next stage in the pipeline
    * @param resolve callback to hand control back to the caller with a final output
    * @param reject callback to hand control back to the caller with a failure reason
+   * @param signal cancellation signal for the current pipeline run
    */
   invoke: (
     input: T,
     next: (input: T) => Promise<T>,
     resolve: (output?: T | PromiseLike<T>) => void,
     reject: (reason: unknown) => void,
+    signal?: AbortSignal,
   ) => void;
 }

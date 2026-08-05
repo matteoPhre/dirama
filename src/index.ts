@@ -7,8 +7,11 @@ export * from "./contracts/IPipelineHooks.js";
 export * from "./contracts/IMatchCallback.js";
 export * from "./contracts/IExecuteCallback.js";
 export * from "./contracts/IExecutionMetadata.js";
+export * from "./contracts/IPipelineRunOptions.js";
 
 export * from "./ExecutionContext.js";
+
+export * from "./errors/PipelineAbortError.js";
 
 export * from "./stages/BasePipelineStage.js";
 export * from "./stages/BaseConditionalPipelineStage.js";

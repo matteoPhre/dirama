@@ -50,12 +50,13 @@ export class PipelineFilter<T extends IBaseMessage>
     next: (input: T) => Promise<T>,
     resolve: (output?: T | PromiseLike<T>) => void,
     reject: (reason: unknown) => void,
+    signal?: AbortSignal,
   ): void {
     if (this.matches(input)) {
       this.filterPipeline.setParentNext(next);
 
       this.filterPipeline
-        .run(input)
+        .run(input, { signal })
         .then((value) => {
           resolve(value);
         })
