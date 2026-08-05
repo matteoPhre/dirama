@@ -1,4 +1,4 @@
-# dirama
+# @matteophre/dirama
 
 [![CI](https://github.com/matteoPhre/dirama/actions/workflows/ci.yml/badge.svg)](https://github.com/matteoPhre/dirama/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/@matteophre/dirama.svg)](https://www.npmjs.com/package/@matteophre/dirama)
@@ -8,7 +8,7 @@ An asynchronous, compositional pipeline and conditional-stage orchestration engi
 
 ## The problem it solves
 
-As a processing flow (validation, enrichment, side-effects, notifications, etc.) grows, imperative code with nested `if`/`else` quickly becomes hard to read, test, and extend. **dirama** provides a lightweight, dependency-free engine for composing this logic as a sequence of independent **stages** (`Stage`), executed in order on a shared **message** (`Message`), with the ability to run sub-pipelines only when a condition (**filter**) is met.
+As a processing flow (validation, enrichment, side-effects, notifications, etc.) grows, imperative code with nested `if`/`else` quickly becomes hard to read, test, and extend. **@matteophre/dirama** provides a lightweight, dependency-free engine for composing this logic as a sequence of independent **stages** (`Stage`), executed in order on a shared **message** (`Message`), with the ability to run sub-pipelines only when a condition (**filter**) is met.
 
 ### Architecture: Pipeline / Stage / Filter / Message
 
@@ -17,6 +17,7 @@ As a processing flow (validation, enrichment, side-effects, notifications, etc.)
 - **`Pipeline`** — orchestrates a sequence of `Stage`s, invoking them in order and handling early exit when a message sets the `exit` flag.
 - **`Filter`** (`PipelineFilter`) — a special `Stage` that evaluates a predicate (`IMatchCallback`) on the message: if the predicate is true, it runs a nested sub-pipeline (`SubPipeline`) of stages; otherwise it passes control directly to the next stage.
 - **`Task`** (`PipelineTask`) — the most common "leaf" `Stage`: it wraps a simple asynchronous callback (`IExecuteCallback`) that acts on the message.
+- **`ExecutionContext`** — an optional, strongly-typed `Message` implementation that carries a mutable `TState` payload plus baseline `IExecutionMetadata` (`requestId`, `timestamp`) across stages, without requiring type assertions (`as`).
 
 ```mermaid
 flowchart LR
@@ -38,6 +39,7 @@ flowchart LR
   - [Defining a Message](#defining-a-message)
   - [Defining a custom Stage](#defining-a-custom-stage)
   - [Defining a conditional filter](#defining-a-conditional-filter)
+  - [Using ExecutionContext for typed state](#using-executioncontext-for-typed-state)
   - [Observability hooks](#observability-hooks)
 - [Available scripts](#available-scripts)
 - [License](#license)
@@ -200,6 +202,44 @@ pipeline.pipe(
 ```
 
 A stage piped onto a `PipelineFilter` is executed only if the predicate returns `true`; otherwise the filter is a no-op and control passes directly to the next stage of the main pipeline.
+
+### Using ExecutionContext for typed state
+
+When a plain `IBaseMessage` implementation is not enough — for example, when several stages need to read and mutate a shared, strongly-typed payload — use `ExecutionContext<TState, TMetadata>` instead of a hand-rolled message class. It implements `IBaseMessage` itself, so it can flow through a `Pipeline` unchanged, and it exposes `getState`/`setState`/`setStateValue` to mutate the payload immutably without ever needing an `as` assertion. Every instance also carries baseline metadata (`requestId`, `timestamp`), optionally extended with your own fields:
+
+```typescript
+import { ExecutionContext, Pipeline, PipelineTask } from "@matteophre/dirama";
+
+interface OrderState {
+  total: number;
+  items: string[];
+}
+
+interface OrderMetadata {
+  tenantId: string;
+}
+
+const addTax = new PipelineTask<ExecutionContext<OrderState, OrderMetadata>>(
+  (ctx, resolve) => {
+    ctx.setState({ total: ctx.getState().total * 1.22 });
+    resolve(ctx);
+  },
+  "add-tax",
+);
+
+const pipeline = new Pipeline<ExecutionContext<OrderState, OrderMetadata>>();
+pipeline.pipe(addTax);
+
+const context = new ExecutionContext<OrderState, OrderMetadata>(
+  { total: 100, items: ["sku-1"] },
+  { tenantId: "tenant-1" },
+);
+
+const result = await pipeline.run(context);
+
+console.log(result.getState().total); // 122
+console.log(result.metadata.requestId); // unique per-run identifier
+```
 
 ### Observability hooks
 
