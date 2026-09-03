@@ -117,6 +117,148 @@ describe("Pipeline", () => {
 		expect(events).toEqual(["start:TASK__ok", "end:TASK__ok"]);
 	});
 
+	it("invokes pipeline lifecycle hooks around stage hooks", async () => {
+		const events: string[] = [];
+		const pipeline = new Pipeline<TestMessage>({
+			onPipelineStart: () => events.push("pipeline:start"),
+			onStageStart: (stage) => events.push(`stage:start:${stage.name}`),
+			onStageEnd: (stage) => events.push(`stage:end:${stage.name}`),
+			onPipelineEnd: () => events.push("pipeline:end"),
+		});
+
+		pipeline.pipe(
+			new PipelineTask<TestMessage>((input, resolve) => {
+				resolve(input);
+			}, "ok"),
+		);
+
+		await pipeline.run(new TestMessage());
+
+		expect(events).toEqual([
+			"pipeline:start",
+			"stage:start:TASK__ok",
+			"stage:end:TASK__ok",
+			"pipeline:end",
+		]);
+	});
+
+	it("continues execution when a lifecycle hook throws", async () => {
+		const hookError = new Error("hook failure");
+		const reportedErrors: unknown[] = [];
+		const pipeline = new Pipeline<TestMessage>({
+			onStageStart: () => {
+				throw hookError;
+			},
+			onError: (_stage, error) => reportedErrors.push(error),
+		});
+
+		pipeline.pipe(
+			new PipelineTask<TestMessage>((input, resolve) => {
+				input.value += 1;
+				resolve(input);
+			}, "increment"),
+		);
+
+		const result = await pipeline.run(new TestMessage());
+
+		expect(result.value).toBe(1);
+		expect(reportedErrors).toEqual([hookError]);
+	});
+
+	it("continues when pipeline boundary and stage end hooks throw", async () => {
+		const startError = new Error("pipeline start failure");
+		const endError = new Error("stage end failure");
+		const pipelineEndError = new Error("pipeline end failure");
+		const reportedErrors: unknown[] = [];
+		const pipeline = new Pipeline<TestMessage>({
+			onPipelineStart: () => {
+				throw startError;
+			},
+			onStageEnd: () => {
+				throw endError;
+			},
+			onPipelineEnd: () => {
+				throw pipelineEndError;
+			},
+			onError: (_stage, error) => reportedErrors.push(error),
+		});
+
+		pipeline.pipe(
+			new PipelineTask<TestMessage>((input, resolve) => {
+				input.value += 1;
+				resolve(input);
+			}, "increment"),
+		);
+
+		const result = await pipeline.run(new TestMessage());
+
+		expect(result.value).toBe(1);
+		expect(reportedErrors).toEqual([startError, endError, pipelineEndError]);
+	});
+
+	it("invokes lifecycle hooks for an empty pipeline", async () => {
+		const events: string[] = [];
+		const pipeline = new Pipeline<TestMessage>({
+			onPipelineStart: () => events.push("start"),
+			onPipelineEnd: () => events.push("end"),
+		});
+
+		await pipeline.run(new TestMessage());
+
+		expect(events).toEqual(["start", "end"]);
+	});
+
+	it("invokes pipeline end after an early exit", async () => {
+		const events: string[] = [];
+		const pipeline = new Pipeline<TestMessage>({
+			onPipelineEnd: () => events.push("end"),
+		});
+
+		pipeline.pipe(
+			new PipelineTask<TestMessage>((input, resolve) => {
+				input.setExit(true);
+				resolve(input);
+			}, "exit"),
+		);
+
+		await pipeline.run(new TestMessage());
+
+		expect(events).toEqual(["end"]);
+	});
+
+	it("does not invoke pipeline end when a stage rejects", async () => {
+		const events: string[] = [];
+		const pipeline = new Pipeline<TestMessage>({
+			onPipelineEnd: () => events.push("end"),
+		});
+
+		pipeline.pipe(
+			new PipelineTask<TestMessage>((_input, _resolve, reject) => {
+				reject(new Error("boom"));
+			}, "failing"),
+		);
+
+		await expect(pipeline.run(new TestMessage())).rejects.toThrow("boom");
+
+		expect(events).toEqual([]);
+	});
+
+	it("swallows errors thrown by the error hook", async () => {
+		const pipeline = new Pipeline<TestMessage>({
+			onError: () => {
+				throw new Error("error hook failure");
+			},
+		});
+
+		pipeline.pipe(
+			new PipelineTask<TestMessage>((_input, _resolve, reject) => {
+				reject(new Error("stage failure"));
+			}, "failing"),
+		);
+
+		await expect(pipeline.run(new TestMessage())).rejects.toThrow("stage failure");
+	});
+
 	it("exposes current stage/index while running and resets after", async () => {
 		const pipeline = new Pipeline<TestMessage>();
 

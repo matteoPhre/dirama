@@ -77,7 +77,14 @@ export class Pipeline<T extends IBaseMessage> implements IPipeline<T> {
     this.resetInputExitState(input);
     this.setupAbortController(options?.signal);
 
-    return this.next(input).finally(() => this.teardownAbortController());
+    this.invokeHook(() => this.hooks?.onPipelineStart?.(input), null, input);
+
+    return this.next(input)
+      .then((output) => {
+        this.invokeHook(() => this.hooks?.onPipelineEnd?.(output), null, output);
+        return output;
+      })
+      .finally(() => this.teardownAbortController());
   }
 
   /** Combined cancellation signal for the current run. */
@@ -143,7 +150,12 @@ export class Pipeline<T extends IBaseMessage> implements IPipeline<T> {
 
     if (this.signal.aborted) {
       const abortReason = this.buildAbortError();
-      this.hooks?.onError?.(this.getCurrentStage(), abortReason, input);
+      this.invokeHook(
+        () => this.hooks?.onError?.(this.getCurrentStage(), abortReason, input),
+        this.getCurrentStage(),
+        input,
+        false,
+      );
       return Promise.reject(abortReason);
     }
 
@@ -152,17 +164,32 @@ export class Pipeline<T extends IBaseMessage> implements IPipeline<T> {
 
       const currentStage = this.getCurrentStage();
       if (currentStage !== null && currentStage !== undefined) {
-        this.hooks?.onStageStart?.(currentStage, input);
+        this.invokeHook(
+          () => this.hooks?.onStageStart?.(currentStage, input),
+          currentStage,
+          input,
+        );
 
         const wrappedResolve = (output?: T | PromiseLike<T>): void => {
-          Promise.resolve(output ?? input).then((resolved) => {
-            this.hooks?.onStageEnd?.(currentStage, resolved);
-          });
-          resolve(output ?? input);
+          Promise.resolve(output ?? input)
+            .then((resolved) => {
+              this.invokeHook(
+                () => this.hooks?.onStageEnd?.(currentStage, resolved),
+                currentStage,
+                resolved,
+              );
+              resolve(resolved);
+            })
+            .catch(wrappedReject);
         };
 
         const wrappedReject = (reason: unknown): void => {
-          this.hooks?.onError?.(currentStage, reason, input);
+          this.invokeHook(
+            () => this.hooks?.onError?.(currentStage, reason, input),
+            currentStage,
+            input,
+            false,
+          );
           reject(reason);
         };
 
@@ -182,6 +209,26 @@ export class Pipeline<T extends IBaseMessage> implements IPipeline<T> {
     }
 
     return new PipelineAbortError(undefined, { cause: reason });
+  }
+
+  private invokeHook(
+    callback: () => void,
+    stage: IStage<T> | null,
+    message: T,
+    reportError: boolean = true,
+  ): void {
+    try {
+      callback();
+    } catch (error) {
+      if (reportError) {
+        this.invokeHook(
+          () => this.hooks?.onError?.(stage, error, message),
+          stage,
+          message,
+          false,
+        );
+      }
+    }
   }
 
   /**
