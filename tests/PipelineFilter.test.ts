@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { Pipeline } from "../src/engine/Pipeline.js";
 import { PipelineFilter } from "../src/stages/PipelineFilter.js";
 import { PipelineTask } from "../src/stages/PipelineTask.js";
+import { PipelineExecutionError } from "../src/errors/PipelineExecutionError.js";
 import { TestMessage } from "./helpers/TestMessage.js";
 
 describe("PipelineFilter", () => {
@@ -148,6 +149,37 @@ describe("PipelineFilter", () => {
 
 		pipeline.pipe(filter);
 
-		await expect(pipeline.run(new TestMessage())).rejects.toThrow("inner failure");
+		await expect(pipeline.run(new TestMessage())).rejects.toMatchObject({
+			stageName: "FILTER__always",
+			cause: expect.objectContaining({ stageName: "TASK__failing" }),
+		});
+	});
+
+	it("chains outer and inner stage details for an inner failure", async () => {
+		const pipeline = new Pipeline<TestMessage>();
+		const cause = new Error("inner failure");
+		const filter = new PipelineFilter<TestMessage>(() => true, "always");
+
+		filter.pipe(
+			new PipelineTask<TestMessage>((_input, _resolve, reject) => {
+				reject(cause);
+			}, "failing"),
+		);
+		pipeline.pipe(filter);
+
+		try {
+			await pipeline.run(new TestMessage());
+			expect.unreachable("pipeline should reject");
+		} catch (error) {
+			expect(error).toBeInstanceOf(PipelineExecutionError);
+			if (error instanceof PipelineExecutionError) {
+				expect(error.stageName).toBe("FILTER__always");
+				expect(error.cause).toBeInstanceOf(PipelineExecutionError);
+				if (error.cause instanceof PipelineExecutionError) {
+					expect(error.cause.stageName).toBe("TASK__failing");
+					expect(error.cause.cause).toBe(cause);
+				}
+			}
+		}
 	});
 });

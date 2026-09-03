@@ -4,6 +4,7 @@ import { IPipeline } from "../contracts/IPipeline.js";
 import { IPipelineHooks } from "../contracts/IPipelineHooks.js";
 import { IPipelineRunOptions } from "../contracts/IPipelineRunOptions.js";
 import { PipelineAbortError } from "../errors/PipelineAbortError.js";
+import { PipelineExecutionError } from "../errors/PipelineExecutionError.js";
 
 /**
  * Pipeline of stages executed in sequence.
@@ -149,7 +150,7 @@ export class Pipeline<T extends IBaseMessage> implements IPipeline<T> {
     }
 
     if (this.signal.aborted) {
-      const abortReason = this.buildAbortError();
+      const abortReason = this.buildAbortError(input);
       this.invokeHook(
         () => this.hooks?.onError?.(this.getCurrentStage(), abortReason, input),
         this.getCurrentStage(),
@@ -184,31 +185,55 @@ export class Pipeline<T extends IBaseMessage> implements IPipeline<T> {
         };
 
         const wrappedReject = (reason: unknown): void => {
+          const executionError = this.buildExecutionError(reason, currentStage, input);
           this.invokeHook(
-            () => this.hooks?.onError?.(currentStage, reason, input),
+            () => this.hooks?.onError?.(currentStage, executionError, input),
             currentStage,
             input,
             false,
           );
-          reject(reason);
+          reject(executionError);
         };
 
-        currentStage.invoke(input, this.next, wrappedResolve, wrappedReject, this.signal);
+        try {
+          currentStage.invoke(input, this.next, wrappedResolve, wrappedReject, this.signal);
+        } catch (reason) {
+          wrappedReject(reason);
+        }
         return;
       }
 
       // End of pipeline
-      this.end(input).then(resolve).catch(reject);
+      this.end(input)
+        .then(resolve)
+        .catch((reason) => reject(this.buildExecutionError(reason, undefined, input)));
     });
   };
 
-  private buildAbortError(): PipelineAbortError {
+  private buildAbortError(input: T): PipelineAbortError<T> {
     const reason: unknown = this.controller.signal.reason;
     if (reason instanceof PipelineAbortError) {
       return reason;
     }
 
-    return new PipelineAbortError(undefined, { cause: reason });
+    return new PipelineAbortError(
+      "Pipeline execution aborted",
+      { cause: reason },
+      input,
+      this.getCurrentStage()?.name,
+    );
+  }
+
+  private buildExecutionError(
+    reason: unknown,
+    stage: IStage<T> | undefined,
+    input: T,
+  ): PipelineExecutionError<T> | PipelineAbortError<T> {
+    if (reason instanceof PipelineAbortError) {
+      return reason;
+    }
+
+    return new PipelineExecutionError(input, stage?.name, { cause: reason });
   }
 
   private invokeHook(

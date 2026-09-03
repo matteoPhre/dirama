@@ -3,6 +3,7 @@ import { Pipeline } from "../src/engine/Pipeline.js";
 import { PipelineFilter } from "../src/stages/PipelineFilter.js";
 import { PipelineTask } from "../src/stages/PipelineTask.js";
 import { PipelineAbortError } from "../src/errors/PipelineAbortError.js";
+import { PipelineExecutionError } from "../src/errors/PipelineExecutionError.js";
 import { TestMessage } from "./helpers/TestMessage.js";
 
 describe("Pipeline cancellation", () => {
@@ -31,6 +32,7 @@ describe("Pipeline cancellation", () => {
 		const controller = new AbortController();
 		controller.abort();
 		let ran = false;
+		const message = new TestMessage();
 
 		pipeline.pipe(
 			new PipelineTask<TestMessage>((input, resolve) => {
@@ -39,10 +41,24 @@ describe("Pipeline cancellation", () => {
 			}, "should-not-run"),
 		);
 
-		await expect(pipeline.run(new TestMessage(), { signal: controller.signal })).rejects.toBeInstanceOf(
+		await expect(pipeline.run(message, { signal: controller.signal })).rejects.toBeInstanceOf(
 			PipelineAbortError,
 		);
+		await expect(pipeline.run(message, { signal: controller.signal })).rejects.toBeInstanceOf(
+			PipelineExecutionError,
+		);
+		await expect(pipeline.run(message, { signal: controller.signal })).rejects.toMatchObject({
+			pipelineMessage: message,
+			stageName: undefined,
+		});
 		expect(ran).toBe(false);
+	});
+
+	it("allows PipelineAbortError without a pipeline message", () => {
+		const error = new PipelineAbortError<TestMessage>();
+
+		expect(error.pipelineMessage).toBeUndefined();
+		expect(error).toBeInstanceOf(PipelineExecutionError);
 	});
 
 	it("stops running further stages once the external signal aborts mid-run", async () => {
@@ -118,7 +134,9 @@ describe("Pipeline cancellation", () => {
 			}, "failing"),
 		);
 
-		await expect(pipeline.run(new TestMessage())).rejects.toThrow("boom");
+		await expect(pipeline.run(new TestMessage())).rejects.toMatchObject({
+			cause: expect.objectContaining({ message: "boom" }),
+		});
 		expect(capturedSignal?.aborted).toBe(true);
 	});
 

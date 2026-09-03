@@ -12,6 +12,7 @@ export * from "./contracts/IPipelineRunOptions.js";
 export * from "./ExecutionContext.js";
 
 export * from "./errors/PipelineAbortError.js";
+export * from "./errors/PipelineExecutionError.js";
 
 export * from "./stages/BasePipelineStage.js";
 export * from "./stages/BaseConditionalPipelineStage.js";
