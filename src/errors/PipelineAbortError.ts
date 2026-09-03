@@ -3,9 +3,17 @@
  * (either passed to `run` or triggered internally on early exit/failure)
  * before it settles naturally.
  */
-export class PipelineAbortError extends Error {
-  constructor(message: string = "Pipeline execution aborted", options?: ErrorOptions) {
-    super(message, options);
+import { PipelineExecutionError } from "./PipelineExecutionError.js";
+
+export class PipelineAbortError<T> extends PipelineExecutionError<T | undefined> {
+  constructor(
+    message: string = "Pipeline execution aborted",
+    options?: ErrorOptions,
+    pipelineMessage?: T,
+    stageName?: string,
+  ) {
+    super(pipelineMessage, stageName, options ?? {});
     this.name = "PipelineAbortError";
+    this.message = message;
   }
 }

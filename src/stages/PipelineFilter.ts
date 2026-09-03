@@ -20,6 +20,7 @@ export class PipelineFilter<T extends IBaseMessage>
   private readonly match: IMatchCallback<T> | null;
   private readonly hooks?: IPipelineHooks<T>;
   private innerPipeline: SubPipeline<T> | null = null;
+  private stageSkipObserver?: (stage: IStage<T>, message: T) => void;
 
   constructor(
     match: IMatchCallback<T> | null = null,
@@ -45,6 +46,12 @@ export class PipelineFilter<T extends IBaseMessage>
     return this;
   }
 
+  public setStageSkipObserver(
+    observer: (stage: IStage<T>, message: T) => void,
+  ): void {
+    this.stageSkipObserver = observer;
+  }
+
   public invoke(
     input: T,
     next: (input: T) => Promise<T>,
@@ -67,6 +74,13 @@ export class PipelineFilter<T extends IBaseMessage>
     }
 
     // Predicate didn't match: skip the inner pipeline entirely.
+      this.invokeHook(
+        () => this.hooks?.onStageSkip?.(this, input),
+        this,
+        input,
+      );
+      this.invokeHook(() => this.stageSkipObserver?.(this, input), this, input);
+
     next(input)
       .then((value) => {
         resolve(value);
@@ -78,5 +92,25 @@ export class PipelineFilter<T extends IBaseMessage>
 
   protected matches(input: T): boolean {
     return typeof this.match === "function" ? this.match(input) : false;
+  }
+
+  private invokeHook(
+    callback: () => void,
+    stage: IStage<T> | null,
+    message: T,
+    reportError: boolean = true,
+  ): void {
+    try {
+      callback();
+    } catch (error) {
+      if (reportError) {
+        this.invokeHook(
+          () => this.hooks?.onError?.(stage, error, message),
+          stage,
+          message,
+          false,
+        );
+      }
+    }
   }
 }

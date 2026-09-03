@@ -63,7 +63,10 @@ describe("BasePipelineStage", () => {
 		const pipeline = new Pipeline<TestMessage>();
 		pipeline.pipe(new FailingStage().getPipelineTask("failing"));
 
-		await expect(pipeline.run(new TestMessage())).rejects.toThrow("step failure");
+		await expect(pipeline.run(new TestMessage())).rejects.toMatchObject({
+			stageName: "TASK__failing",
+			cause: expect.objectContaining({ message: "step failure" }),
+		});
 	});
 });
 
@@ -90,6 +93,12 @@ describe("BaseConditionalPipelineStage", () => {
 		const pipeline = new Pipeline<TestMessage>();
 		pipeline.pipe(new FailingConditionalStage().getPipelineFilter("failing"));
 
-		await expect(pipeline.run(new TestMessage(1))).rejects.toThrow("conditional step failure");
+		await expect(pipeline.run(new TestMessage(1))).rejects.toMatchObject({
+			stageName: "FILTER__failing",
+			cause: expect.objectContaining({
+				stageName: "TASK__failing",
+				cause: expect.objectContaining({ message: "conditional step failure" }),
+			}),
+		});
 	});
 });

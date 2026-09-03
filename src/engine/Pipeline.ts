@@ -2,8 +2,20 @@ import { IBaseMessage } from "../contracts/IBaseMessage.js";
 import { IStage } from "../contracts/IStage.js";
 import { IPipeline } from "../contracts/IPipeline.js";
 import { IPipelineHooks } from "../contracts/IPipelineHooks.js";
+import { IPipelineOptions } from "../contracts/IPipelineOptions.js";
 import { IPipelineRunOptions } from "../contracts/IPipelineRunOptions.js";
 import { PipelineAbortError } from "../errors/PipelineAbortError.js";
+import { PipelineExecutionError } from "../errors/PipelineExecutionError.js";
+
+interface ISkipObservableStage<T> {
+  setStageSkipObserver(observer: (stage: IStage<T>, message: T) => void): void;
+}
+
+function isSkipObservableStage<T extends IBaseMessage>(
+  stage: IStage<T>,
+): stage is IStage<T> & ISkipObservableStage<T> {
+  return "setStageSkipObserver" in stage && typeof stage.setStageSkipObserver === "function";
+}
 
 /**
  * Pipeline of stages executed in sequence.
@@ -38,8 +50,8 @@ export class Pipeline<T extends IBaseMessage> implements IPipeline<T> {
   private externalSignal?: AbortSignal;
   private externalAbortListener?: () => void;
 
-  constructor(hooks?: IPipelineHooks<T>) {
-    this.hooks = hooks;
+  constructor(options?: IPipelineOptions<T>) {
+    this.hooks = options?.debug === true ? this.createDebugHooks(options) : options;
   }
 
   public getCurrent(): number {
@@ -77,7 +89,14 @@ export class Pipeline<T extends IBaseMessage> implements IPipeline<T> {
     this.resetInputExitState(input);
     this.setupAbortController(options?.signal);
 
-    return this.next(input).finally(() => this.teardownAbortController());
+    this.invokeHook(() => this.hooks?.onPipelineStart?.(input), null, input);
+
+    return this.next(input)
+      .then((output) => {
+        this.invokeHook(() => this.hooks?.onPipelineEnd?.(output), null, output);
+        return output;
+      })
+      .finally(() => this.teardownAbortController());
   }
 
   /** Combined cancellation signal for the current run. */
@@ -91,6 +110,16 @@ export class Pipeline<T extends IBaseMessage> implements IPipeline<T> {
 
   protected pushStage(stage: IStage<T>): void {
     this.stages.push(stage);
+
+    if (isSkipObservableStage(stage)) {
+      stage.setStageSkipObserver((skippedStage, message) => {
+        this.invokeHook(
+          () => this.hooks?.onStageSkip?.(skippedStage, message),
+          skippedStage,
+          message,
+        );
+      });
+    }
   }
 
   protected reset(): void {
@@ -142,8 +171,13 @@ export class Pipeline<T extends IBaseMessage> implements IPipeline<T> {
     }
 
     if (this.signal.aborted) {
-      const abortReason = this.buildAbortError();
-      this.hooks?.onError?.(this.getCurrentStage(), abortReason, input);
+      const abortReason = this.buildAbortError(input);
+      this.invokeHook(
+        () => this.hooks?.onError?.(this.getCurrentStage(), abortReason, input),
+        this.getCurrentStage(),
+        input,
+        false,
+      );
       return Promise.reject(abortReason);
     }
 
@@ -152,36 +186,175 @@ export class Pipeline<T extends IBaseMessage> implements IPipeline<T> {
 
       const currentStage = this.getCurrentStage();
       if (currentStage !== null && currentStage !== undefined) {
-        this.hooks?.onStageStart?.(currentStage, input);
+        this.invokeHook(
+          () => this.hooks?.onStageStart?.(currentStage, input),
+          currentStage,
+          input,
+        );
 
         const wrappedResolve = (output?: T | PromiseLike<T>): void => {
-          Promise.resolve(output ?? input).then((resolved) => {
-            this.hooks?.onStageEnd?.(currentStage, resolved);
-          });
-          resolve(output ?? input);
+          Promise.resolve(output ?? input)
+            .then((resolved) => {
+              this.invokeHook(
+                () => this.hooks?.onStageEnd?.(currentStage, resolved),
+                currentStage,
+                resolved,
+              );
+              resolve(resolved);
+            })
+            .catch(wrappedReject);
         };
 
         const wrappedReject = (reason: unknown): void => {
-          this.hooks?.onError?.(currentStage, reason, input);
-          reject(reason);
+          const executionError = this.buildExecutionError(reason, currentStage, input);
+          this.invokeHook(
+            () => this.hooks?.onError?.(currentStage, executionError, input),
+            currentStage,
+            input,
+            false,
+          );
+          reject(executionError);
         };
 
-        currentStage.invoke(input, this.next, wrappedResolve, wrappedReject, this.signal);
+        try {
+          currentStage.invoke(input, this.next, wrappedResolve, wrappedReject, this.signal);
+        } catch (reason) {
+          wrappedReject(reason);
+        }
         return;
       }
 
       // End of pipeline
-      this.end(input).then(resolve).catch(reject);
+      this.end(input)
+        .then(resolve)
+        .catch((reason) => reject(this.buildExecutionError(reason, undefined, input)));
     });
   };
 
-  private buildAbortError(): PipelineAbortError {
+  private buildAbortError(input: T): PipelineAbortError<T> {
     const reason: unknown = this.controller.signal.reason;
     if (reason instanceof PipelineAbortError) {
       return reason;
     }
 
-    return new PipelineAbortError(undefined, { cause: reason });
+    return new PipelineAbortError(
+      "Pipeline execution aborted",
+      { cause: reason },
+      input,
+      this.getCurrentStage()?.name,
+    );
+  }
+
+  private buildExecutionError(
+    reason: unknown,
+    stage: IStage<T> | undefined,
+    input: T,
+  ): PipelineExecutionError<T> | PipelineAbortError<T> {
+    if (reason instanceof PipelineAbortError) {
+      return reason;
+    }
+
+    return new PipelineExecutionError(input, stage?.name, { cause: reason });
+  }
+
+  private createDebugHooks(options: IPipelineOptions<T>): IPipelineHooks<T> {
+    let pipelineStartedAt = 0;
+    const stageStartedAt = new Map<IStage<T>, number>();
+
+    return {
+      onPipelineStart: (message) => {
+        pipelineStartedAt = performance.now();
+        this.debug("pipeline:start", undefined, 0, message);
+        options.onPipelineStart?.(message);
+      },
+      onPipelineEnd: (message) => {
+        const durationMs = performance.now() - pipelineStartedAt;
+        if (message.getExit()) {
+          this.debug("pipeline:early-exit", undefined, durationMs, message);
+        }
+        this.debug("pipeline:end", undefined, durationMs, message);
+        options.onPipelineEnd?.(message);
+      },
+      onStageStart: (stage, input) => {
+        stageStartedAt.set(stage, performance.now());
+        this.debug("stage:start", stage.name, 0, input);
+        options.onStageStart?.(stage, input);
+      },
+      onStageEnd: (stage, output) => {
+        this.debug(
+          "stage:end",
+          stage.name,
+          performance.now() - (stageStartedAt.get(stage) ?? performance.now()),
+          output,
+        );
+        options.onStageEnd?.(stage, output);
+      },
+      onStageSkip: (stage, message) => {
+        this.debug(
+          "stage:skip",
+          stage.name,
+          performance.now() - (stageStartedAt.get(stage) ?? performance.now()),
+          message,
+        );
+        options.onStageSkip?.(stage, message);
+      },
+      onError: (stage, error, input) => {
+        if (error instanceof PipelineAbortError) {
+          this.debug(
+            "pipeline:abort",
+            stage?.name,
+            performance.now() - pipelineStartedAt,
+            input,
+          );
+        }
+        options.onError?.(stage, error, input);
+      },
+    };
+  }
+
+  private debug(
+    event: string,
+    stageName: string | undefined,
+    durationMs: number,
+    message: T,
+  ): void {
+    try {
+      console.debug(`[dirama] ${event}`, {
+        stageName,
+        durationMs,
+        message: this.snapshot(message),
+      });
+    } catch {
+      // Debug logging must never affect pipeline execution.
+    }
+  }
+
+  private snapshot(message: T): T {
+    try {
+      return structuredClone(message);
+    } catch {
+      return message;
+    }
+  }
+
+  private invokeHook(
+    callback: () => void,
+    stage: IStage<T> | null,
+    message: T,
+    reportError: boolean = true,
+  ): void {
+    try {
+      callback();
+    } catch (error) {
+      if (reportError) {
+        this.invokeHook(
+          () => this.hooks?.onError?.(stage, error, message),
+          stage,
+          message,
+          false,
+        );
+      }
+    }
   }
 
   /**

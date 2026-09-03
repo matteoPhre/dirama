@@ -42,7 +42,9 @@ flowchart LR
   - [Defining a conditional filter](#defining-a-conditional-filter)
   - [Using ExecutionContext for typed state](#using-executioncontext-for-typed-state)
   - [Cancellation with AbortSignal](#cancellation-with-abortsignal)
+  - [Structured execution errors](#structured-execution-errors)
   - [Observability hooks](#observability-hooks)
+  - [Debug mode](#debug-mode)
 - [Available scripts](#available-scripts)
 - [License](#license)
 
@@ -245,7 +247,7 @@ console.log(result.metadata.requestId); // unique per-run identifier
 
 ### Cancellation with AbortSignal
 
-`Pipeline.run` accepts an optional `{ signal }` and forwards it as the last argument to every stage's `invoke`/`IExecuteCallback`, so long-running work (e.g. `fetch`) can be tied to it. The pipeline also maintains its own internal signal, combined with the one you pass in, which aborts automatically once the run settles (resolves, rejects, or exits early) so stray async work gets cleaned up. If the signal is already aborted, or aborts mid-run, the pipeline stops advancing to further stages and rejects with a `PipelineAbortError` (its `cause` holds the original abort reason, if any):
+`Pipeline.run` accepts an optional `{ signal }` and forwards it as the last argument to every stage's `invoke`/`IExecuteCallback`, so long-running work (e.g. `fetch`) can be tied to it. The pipeline also maintains its own internal signal, combined with the one you pass in, which aborts automatically once the run settles (resolves, rejects, or exits early) so stray async work gets cleaned up. If the signal is already aborted, or aborts mid-run, the pipeline stops advancing to further stages and rejects with a `PipelineAbortError` (its `cause` holds the original abort reason, if any).
 
 ```typescript
 import { Pipeline, PipelineTask, PipelineAbortError } from "@matteophre/dirama";
@@ -269,7 +271,29 @@ try {
   await pipeline.run(new OrderMessage(), { signal: controller.signal });
 } catch (error) {
   if (error instanceof PipelineAbortError) {
-    console.error("Pipeline was cancelled:", error.cause);
+    console.error("Pipeline was cancelled at", error.stageName, error.cause);
+  }
+}
+```
+
+### Structured execution errors
+
+When a stage fails, `Pipeline.run` rejects with a `PipelineExecutionError`.
+It exposes the failing `stageName`, the current `pipelineMessage`, and the
+original exception as `cause`. `PipelineAbortError` extends this error type;
+an abort created before a message is available has `pipelineMessage` set to
+`undefined`. Nested pipelines preserve their full stage lineage through the
+recursive `cause` chain.
+
+```typescript
+import { PipelineExecutionError } from "@matteophre/dirama";
+
+try {
+  await pipeline.run(new OrderMessage());
+} catch (error) {
+  if (error instanceof PipelineExecutionError) {
+    console.error("Pipeline failed at", error.stageName, error.cause);
+    console.error("Message at failure", error.pipelineMessage);
   }
 }
 ```
@@ -280,11 +304,51 @@ try {
 
 ```typescript
 const pipeline = new Pipeline<OrderMessage>({
+  onPipelineStart: (message) => console.log(`starting ${message.orderId}`),
   onStageStart: (stage, input) => console.log(`> ${stage.name}`, input),
   onStageEnd: (stage, output) => console.log(`< ${stage.name}`, output),
+  onPipelineEnd: (message) => console.log(`finished ${message.orderId}`),
   onError: (stage, error) => console.error(`! ${stage?.name}`, error),
 });
 ```
+
+Use `onStageSkip` on a `PipelineFilter` to observe predicates that do not
+match. Hooks are best-effort: an exception thrown by a hook does not alter the
+pipeline result. Such exceptions are passed to `onError` when it is available;
+exceptions thrown by `onError` itself are swallowed.
+
+```typescript
+const premiumFilter = new PipelineFilter<OrderMessage>(
+  (message) => message.isPremiumCustomer,
+  "premium-discount",
+  {
+    onStageSkip: (stage, message) =>
+      console.log(`skipped ${stage.name} for order`, message),
+  },
+);
+```
+
+### Debug mode
+
+Set `debug: true` in the `Pipeline` constructor to emit lifecycle diagnostics
+through `console.debug`. Debug mode composes with the observability hooks and
+does not change pipeline control flow. Each record includes a stage name when
+available, elapsed milliseconds, and a best-effort snapshot of the message.
+
+```typescript
+const pipeline = new Pipeline<OrderMessage>({
+  debug: true,
+  onError: (stage, error) => reportFailure(stage?.name, error),
+});
+
+await pipeline.run(new OrderMessage());
+```
+
+Debug mode emits `pipeline:start`, `stage:start`, `stage:end`, `stage:skip`,
+`pipeline:early-exit`, `pipeline:end`, and `pipeline:abort` records. A piped
+`PipelineFilter` reports `stage:skip` to its parent pipeline when its predicate
+does not match. Debug records are best-effort: logging or message cloning
+errors never affect the pipeline result.
 
 ## Available scripts
 
