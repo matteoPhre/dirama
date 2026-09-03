@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { Pipeline } from "../src/engine/Pipeline.js";
 import { PipelineFilter } from "../src/stages/PipelineFilter.js";
 import { PipelineTask } from "../src/stages/PipelineTask.js";
@@ -52,6 +52,25 @@ describe("Pipeline cancellation", () => {
 			stageName: undefined,
 		});
 		expect(ran).toBe(false);
+	});
+
+	it("emits an abort debug record without a pipeline end record", async () => {
+		const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+		const pipeline = new Pipeline<TestMessage>({ debug: true });
+		const controller = new AbortController();
+		controller.abort();
+
+		try {
+			await expect(pipeline.run(new TestMessage(), { signal: controller.signal })).rejects.toBeInstanceOf(
+				PipelineAbortError,
+			);
+
+			const labels = debugSpy.mock.calls.map(([label]) => label);
+			expect(labels).toContain("[dirama] pipeline:abort");
+			expect(labels).not.toContain("[dirama] pipeline:end");
+		} finally {
+			debugSpy.mockRestore();
+		}
 	});
 
 	it("allows PipelineAbortError without a pipeline message", () => {

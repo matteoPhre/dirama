@@ -44,6 +44,7 @@ flowchart LR
   - [Cancellation with AbortSignal](#cancellation-with-abortsignal)
   - [Structured execution errors](#structured-execution-errors)
   - [Observability hooks](#observability-hooks)
+  - [Debug mode](#debug-mode)
 - [Available scripts](#available-scripts)
 - [License](#license)
 
@@ -326,6 +327,28 @@ const premiumFilter = new PipelineFilter<OrderMessage>(
   },
 );
 ```
+
+### Debug mode
+
+Set `debug: true` in the `Pipeline` constructor to emit lifecycle diagnostics
+through `console.debug`. Debug mode composes with the observability hooks and
+does not change pipeline control flow. Each record includes a stage name when
+available, elapsed milliseconds, and a best-effort snapshot of the message.
+
+```typescript
+const pipeline = new Pipeline<OrderMessage>({
+  debug: true,
+  onError: (stage, error) => reportFailure(stage?.name, error),
+});
+
+await pipeline.run(new OrderMessage());
+```
+
+Debug mode emits `pipeline:start`, `stage:start`, `stage:end`, `stage:skip`,
+`pipeline:early-exit`, `pipeline:end`, and `pipeline:abort` records. A piped
+`PipelineFilter` reports `stage:skip` to its parent pipeline when its predicate
+does not match. Debug records are best-effort: logging or message cloning
+errors never affect the pipeline result.
 
 ## Available scripts
 

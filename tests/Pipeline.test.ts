@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { Pipeline } from "../src/engine/Pipeline.js";
 import { PipelineTask } from "../src/stages/PipelineTask.js";
 import { TestMessage } from "./helpers/TestMessage.js";
@@ -140,6 +140,114 @@ describe("Pipeline", () => {
 			stageName: "TASK__failing",
 			cause,
 		});
+	});
+
+	it("emits debug lifecycle records only when debug is enabled", async () => {
+		const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+		const pipeline = new Pipeline<TestMessage>({ debug: true });
+		const message = new TestMessage(3);
+
+		pipeline.pipe(
+			new PipelineTask<TestMessage>((input, resolve) => {
+				resolve(input);
+			}, "ok"),
+		);
+
+		try {
+			await pipeline.run(message);
+
+			expect(debugSpy).toHaveBeenCalledWith(
+				"[dirama] pipeline:start",
+				expect.objectContaining({ durationMs: 0, message }),
+			);
+			expect(debugSpy).toHaveBeenCalledWith(
+				"[dirama] stage:start",
+				expect.objectContaining({ stageName: "TASK__ok", durationMs: 0, message }),
+			);
+			expect(debugSpy).toHaveBeenCalledWith(
+				"[dirama] stage:end",
+				expect.objectContaining({ stageName: "TASK__ok", durationMs: expect.any(Number) }),
+			);
+			expect(debugSpy).toHaveBeenCalledWith(
+				"[dirama] pipeline:end",
+				expect.objectContaining({ durationMs: expect.any(Number), message }),
+			);
+		} finally {
+			debugSpy.mockRestore();
+		}
+	});
+
+	it("does not emit debug records by default", async () => {
+		const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+		const pipeline = new Pipeline<TestMessage>();
+
+		pipeline.pipe(
+			new PipelineTask<TestMessage>((input, resolve) => {
+				resolve(input);
+			}, "ok"),
+		);
+
+		try {
+			await pipeline.run(new TestMessage());
+
+			expect(debugSpy).not.toHaveBeenCalled();
+		} finally {
+			debugSpy.mockRestore();
+		}
+	});
+
+	it("emits early exit and pipeline end debug records", async () => {
+		const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+		const pipeline = new Pipeline<TestMessage>({ debug: true });
+
+		pipeline.pipe(
+			new PipelineTask<TestMessage>((input, resolve) => {
+				input.setExit(true);
+				resolve(input);
+			}, "exit"),
+		);
+
+		try {
+			await pipeline.run(new TestMessage());
+
+			const labels = debugSpy.mock.calls.map(([label]) => label);
+			expect(labels).toContain("[dirama] pipeline:early-exit");
+			expect(labels).toContain("[dirama] pipeline:end");
+			expect(labels.indexOf("[dirama] pipeline:early-exit")).toBeLessThan(
+				labels.indexOf("[dirama] pipeline:end"),
+			);
+		} finally {
+			debugSpy.mockRestore();
+		}
+	});
+
+	it("continues debug logging when a user hook throws", async () => {
+		const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+		const pipeline = new Pipeline<TestMessage>({
+			debug: true,
+			onStageStart: () => {
+				throw new Error("hook failure");
+			},
+		});
+
+		pipeline.pipe(
+			new PipelineTask<TestMessage>((input, resolve) => {
+				input.value += 1;
+				resolve(input);
+			}, "increment"),
+		);
+
+		try {
+			const result = await pipeline.run(new TestMessage());
+
+			expect(result.value).toBe(1);
+			expect(debugSpy).toHaveBeenCalledWith(
+				"[dirama] stage:start",
+				expect.objectContaining({ stageName: "TASK__increment" }),
+			);
+		} finally {
+			debugSpy.mockRestore();
+		}
 	});
 
 	it("invokes hooks for stage start/end and errors", async () => {
