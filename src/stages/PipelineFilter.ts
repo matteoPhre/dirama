@@ -67,6 +67,12 @@ export class PipelineFilter<T extends IBaseMessage>
     }
 
     // Predicate didn't match: skip the inner pipeline entirely.
+      this.invokeHook(
+        () => this.hooks?.onStageSkip?.(this, input),
+        this,
+        input,
+      );
+
     next(input)
       .then((value) => {
         resolve(value);
@@ -78,5 +84,25 @@ export class PipelineFilter<T extends IBaseMessage>
 
   protected matches(input: T): boolean {
     return typeof this.match === "function" ? this.match(input) : false;
+  }
+
+  private invokeHook(
+    callback: () => void,
+    stage: IStage<T> | null,
+    message: T,
+    reportError: boolean = true,
+  ): void {
+    try {
+      callback();
+    } catch (error) {
+      if (reportError) {
+        this.invokeHook(
+          () => this.hooks?.onError?.(stage, error, message),
+          stage,
+          message,
+          false,
+        );
+      }
+    }
   }
 }

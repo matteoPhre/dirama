@@ -280,10 +280,28 @@ try {
 
 ```typescript
 const pipeline = new Pipeline<OrderMessage>({
+  onPipelineStart: (message) => console.log(`starting ${message.orderId}`),
   onStageStart: (stage, input) => console.log(`> ${stage.name}`, input),
   onStageEnd: (stage, output) => console.log(`< ${stage.name}`, output),
+  onPipelineEnd: (message) => console.log(`finished ${message.orderId}`),
   onError: (stage, error) => console.error(`! ${stage?.name}`, error),
 });
+```
+
+Use `onStageSkip` on a `PipelineFilter` to observe predicates that do not
+match. Hooks are best-effort: an exception thrown by a hook does not alter the
+pipeline result. Such exceptions are passed to `onError` when it is available;
+exceptions thrown by `onError` itself are swallowed.
+
+```typescript
+const premiumFilter = new PipelineFilter<OrderMessage>(
+  (message) => message.isPremiumCustomer,
+  "premium-discount",
+  {
+    onStageSkip: (stage, message) =>
+      console.log(`skipped ${stage.name} for order`, message),
+  },
+);
 ```
 
 ## Available scripts

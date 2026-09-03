@@ -57,6 +57,47 @@ describe("PipelineFilter", () => {
 		expect(order).toEqual(["outer"]);
 	});
 
+	it("invokes the filter skip hook before the next outer stage", async () => {
+		const events: string[] = [];
+		const pipeline = new Pipeline<TestMessage>();
+		const filter = new PipelineFilter<TestMessage>(() => false, "never", {
+			onStageSkip: (stage, message) => {
+				events.push(`skip:${stage.name}:${message.value}`);
+			},
+		});
+
+		pipeline
+			.pipe(filter)
+			.pipe(
+				new PipelineTask<TestMessage>((input, resolve) => {
+					events.push("outer");
+					resolve(input);
+				}, "outer"),
+			);
+
+		await pipeline.run(new TestMessage(3));
+
+		expect(events).toEqual(["skip:FILTER__never:3", "outer"]);
+	});
+
+	it("continues when the filter skip hook throws", async () => {
+		const hookError = new Error("skip hook failure");
+		const reportedErrors: unknown[] = [];
+		const pipeline = new Pipeline<TestMessage>();
+		const filter = new PipelineFilter<TestMessage>(() => false, "never", {
+			onStageSkip: () => {
+				throw hookError;
+			},
+			onError: (_stage, error) => reportedErrors.push(error),
+		});
+
+		pipeline.pipe(filter);
+
+		await pipeline.run(new TestMessage());
+
+		expect(reportedErrors).toEqual([hookError]);
+	});
+
 	it("treats a null predicate as always non-matching", async () => {
 		const order: string[] = [];
 		const pipeline = new Pipeline<TestMessage>();
