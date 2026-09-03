@@ -4,6 +4,7 @@ export * from "./contracts/IPipeline.js";
 export * from "./contracts/IPipeable.js";
 export * from "./contracts/IStage.js";
 export * from "./contracts/IPipelineHooks.js";
+export * from "./contracts/IPipelineOptions.js";
 export * from "./contracts/IMatchCallback.js";
 export * from "./contracts/IExecuteCallback.js";
 export * from "./contracts/IExecutionMetadata.js";

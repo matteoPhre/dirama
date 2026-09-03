@@ -20,6 +20,7 @@ export class PipelineFilter<T extends IBaseMessage>
   private readonly match: IMatchCallback<T> | null;
   private readonly hooks?: IPipelineHooks<T>;
   private innerPipeline: SubPipeline<T> | null = null;
+  private stageSkipObserver?: (stage: IStage<T>, message: T) => void;
 
   constructor(
     match: IMatchCallback<T> | null = null,
@@ -43,6 +44,12 @@ export class PipelineFilter<T extends IBaseMessage>
     this.filterPipeline.pipe(stage);
 
     return this;
+  }
+
+  public setStageSkipObserver(
+    observer: (stage: IStage<T>, message: T) => void,
+  ): void {
+    this.stageSkipObserver = observer;
   }
 
   public invoke(
@@ -72,6 +79,7 @@ export class PipelineFilter<T extends IBaseMessage>
         this,
         input,
       );
+      this.invokeHook(() => this.stageSkipObserver?.(this, input), this, input);
 
     next(input)
       .then((value) => {

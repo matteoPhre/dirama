@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { Pipeline } from "../src/engine/Pipeline.js";
 import { PipelineFilter } from "../src/stages/PipelineFilter.js";
 import { PipelineTask } from "../src/stages/PipelineTask.js";
@@ -79,6 +79,32 @@ describe("PipelineFilter", () => {
 		await pipeline.run(new TestMessage(3));
 
 		expect(events).toEqual(["skip:FILTER__never:3", "outer"]);
+	});
+
+	it("forwards filter skips to the parent hooks and debug records", async () => {
+		const events: string[] = [];
+		const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+		const pipeline = new Pipeline<TestMessage>({
+			debug: true,
+			onStageSkip: (stage) => events.push(`parent:${stage.name}`),
+		});
+		const filter = new PipelineFilter<TestMessage>(() => false, "never", {
+			onStageSkip: (stage) => events.push(`filter:${stage.name}`),
+		});
+
+		pipeline.pipe(filter);
+
+		try {
+			await pipeline.run(new TestMessage());
+
+			expect(events).toEqual(["filter:FILTER__never", "parent:FILTER__never"]);
+			expect(debugSpy).toHaveBeenCalledWith(
+				"[dirama] stage:skip",
+				expect.objectContaining({ stageName: "FILTER__never", durationMs: expect.any(Number) }),
+			);
+		} finally {
+			debugSpy.mockRestore();
+		}
 	});
 
 	it("continues when the filter skip hook throws", async () => {

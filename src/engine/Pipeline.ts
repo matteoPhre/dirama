@@ -2,9 +2,20 @@ import { IBaseMessage } from "../contracts/IBaseMessage.js";
 import { IStage } from "../contracts/IStage.js";
 import { IPipeline } from "../contracts/IPipeline.js";
 import { IPipelineHooks } from "../contracts/IPipelineHooks.js";
+import { IPipelineOptions } from "../contracts/IPipelineOptions.js";
 import { IPipelineRunOptions } from "../contracts/IPipelineRunOptions.js";
 import { PipelineAbortError } from "../errors/PipelineAbortError.js";
 import { PipelineExecutionError } from "../errors/PipelineExecutionError.js";
+
+interface ISkipObservableStage<T> {
+  setStageSkipObserver(observer: (stage: IStage<T>, message: T) => void): void;
+}
+
+function isSkipObservableStage<T extends IBaseMessage>(
+  stage: IStage<T>,
+): stage is IStage<T> & ISkipObservableStage<T> {
+  return "setStageSkipObserver" in stage && typeof stage.setStageSkipObserver === "function";
+}
 
 /**
  * Pipeline of stages executed in sequence.
@@ -39,8 +50,8 @@ export class Pipeline<T extends IBaseMessage> implements IPipeline<T> {
   private externalSignal?: AbortSignal;
   private externalAbortListener?: () => void;
 
-  constructor(hooks?: IPipelineHooks<T>) {
-    this.hooks = hooks;
+  constructor(options?: IPipelineOptions<T>) {
+    this.hooks = options?.debug === true ? this.createDebugHooks(options) : options;
   }
 
   public getCurrent(): number {
@@ -99,6 +110,16 @@ export class Pipeline<T extends IBaseMessage> implements IPipeline<T> {
 
   protected pushStage(stage: IStage<T>): void {
     this.stages.push(stage);
+
+    if (isSkipObservableStage(stage)) {
+      stage.setStageSkipObserver((skippedStage, message) => {
+        this.invokeHook(
+          () => this.hooks?.onStageSkip?.(skippedStage, message),
+          skippedStage,
+          message,
+        );
+      });
+    }
   }
 
   protected reset(): void {
@@ -234,6 +255,86 @@ export class Pipeline<T extends IBaseMessage> implements IPipeline<T> {
     }
 
     return new PipelineExecutionError(input, stage?.name, { cause: reason });
+  }
+
+  private createDebugHooks(options: IPipelineOptions<T>): IPipelineHooks<T> {
+    let pipelineStartedAt = 0;
+    const stageStartedAt = new Map<IStage<T>, number>();
+
+    return {
+      onPipelineStart: (message) => {
+        pipelineStartedAt = performance.now();
+        this.debug("pipeline:start", undefined, 0, message);
+        options.onPipelineStart?.(message);
+      },
+      onPipelineEnd: (message) => {
+        const durationMs = performance.now() - pipelineStartedAt;
+        if (message.getExit()) {
+          this.debug("pipeline:early-exit", undefined, durationMs, message);
+        }
+        this.debug("pipeline:end", undefined, durationMs, message);
+        options.onPipelineEnd?.(message);
+      },
+      onStageStart: (stage, input) => {
+        stageStartedAt.set(stage, performance.now());
+        this.debug("stage:start", stage.name, 0, input);
+        options.onStageStart?.(stage, input);
+      },
+      onStageEnd: (stage, output) => {
+        this.debug(
+          "stage:end",
+          stage.name,
+          performance.now() - (stageStartedAt.get(stage) ?? performance.now()),
+          output,
+        );
+        options.onStageEnd?.(stage, output);
+      },
+      onStageSkip: (stage, message) => {
+        this.debug(
+          "stage:skip",
+          stage.name,
+          performance.now() - (stageStartedAt.get(stage) ?? performance.now()),
+          message,
+        );
+        options.onStageSkip?.(stage, message);
+      },
+      onError: (stage, error, input) => {
+        if (error instanceof PipelineAbortError) {
+          this.debug(
+            "pipeline:abort",
+            stage?.name,
+            performance.now() - pipelineStartedAt,
+            input,
+          );
+        }
+        options.onError?.(stage, error, input);
+      },
+    };
+  }
+
+  private debug(
+    event: string,
+    stageName: string | undefined,
+    durationMs: number,
+    message: T,
+  ): void {
+    try {
+      console.debug(`[dirama] ${event}`, {
+        stageName,
+        durationMs,
+        message: this.snapshot(message),
+      });
+    } catch {
+      // Debug logging must never affect pipeline execution.
+    }
+  }
+
+  private snapshot(message: T): T {
+    try {
+      return structuredClone(message);
+    } catch {
+      return message;
+    }
   }
 
   private invokeHook(
