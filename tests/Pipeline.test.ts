@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { Pipeline } from "../src/engine/Pipeline.js";
 import { PipelineTask } from "../src/stages/PipelineTask.js";
 import { TestMessage } from "./helpers/TestMessage.js";
+import { PipelineExecutionError } from "../src/errors/PipelineExecutionError.js";
 
 describe("Pipeline", () => {
 	it("runs stages in order", async () => {
@@ -95,7 +96,50 @@ describe("Pipeline", () => {
 			}, "failing"),
 		);
 
-		await expect(pipeline.run(new TestMessage())).rejects.toThrow("boom");
+		await expect(pipeline.run(new TestMessage())).rejects.toMatchObject({ cause: error });
+	});
+
+	it("wraps a stage failure with execution details", async () => {
+		const pipeline = new Pipeline<TestMessage>();
+		const cause = new Error("boom");
+		const message = new TestMessage(3);
+
+		pipeline.pipe(
+			new PipelineTask<TestMessage>((_input, _resolve, reject) => {
+				reject(cause);
+			}, "failing"),
+		);
+
+		await expect(pipeline.run(message)).rejects.toMatchObject({
+			name: "PipelineExecutionError",
+			message: 'Pipeline execution failed at stage "TASK__failing"',
+			stageName: "TASK__failing",
+			pipelineMessage: message,
+			cause,
+		});
+		await expect(pipeline.run(message)).rejects.toBeInstanceOf(PipelineExecutionError);
+	});
+
+	it("passes a structured execution error to the error hook", async () => {
+		const cause = new Error("boom");
+		let observedError: unknown;
+		const pipeline = new Pipeline<TestMessage>({
+			onError: (_stage, error) => {
+				observedError = error;
+			},
+		});
+
+		pipeline.pipe(
+			new PipelineTask<TestMessage>((_input, _resolve, reject) => {
+				reject(cause);
+			}, "failing"),
+		);
+
+		await expect(pipeline.run(new TestMessage())).rejects.toBeInstanceOf(PipelineExecutionError);
+		expect(observedError).toMatchObject({
+			stageName: "TASK__failing",
+			cause,
+		});
 	});
 
 	it("invokes hooks for stage start/end and errors", async () => {
@@ -238,7 +282,9 @@ describe("Pipeline", () => {
 			}, "failing"),
 		);
 
-		await expect(pipeline.run(new TestMessage())).rejects.toThrow("boom");
+		await expect(pipeline.run(new TestMessage())).rejects.toMatchObject({
+			cause: expect.any(Error),
+		});
 
 		expect(events).toEqual([]);
 	});
@@ -256,7 +302,9 @@ describe("Pipeline", () => {
 			}, "failing"),
 		);
 
-		await expect(pipeline.run(new TestMessage())).rejects.toThrow("stage failure");
+		await expect(pipeline.run(new TestMessage())).rejects.toMatchObject({
+			cause: expect.objectContaining({ message: "stage failure" }),
+		});
 	});
 
 	it("exposes current stage/index while running and resets after", async () => {

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { SubPipeline } from "../src/engine/SubPipeline.js";
 import { PipelineTask } from "../src/stages/PipelineTask.js";
+import { PipelineExecutionError } from "../src/errors/PipelineExecutionError.js";
 import { TestMessage } from "./helpers/TestMessage.js";
 
 describe("SubPipeline", () => {
@@ -52,6 +53,14 @@ describe("SubPipeline", () => {
 
 		subPipeline.setParentNext(() => Promise.reject(error));
 
-		await expect(subPipeline.run(new TestMessage())).rejects.toThrow("parent failure");
+		await expect(subPipeline.run(new TestMessage())).rejects.toMatchObject({
+			name: "PipelineExecutionError",
+			stageName: "TASK__sub-task",
+			cause: expect.objectContaining({
+				stageName: undefined,
+				cause: error,
+			}),
+		});
+		await expect(subPipeline.run(new TestMessage())).rejects.toBeInstanceOf(PipelineExecutionError);
 	});
 });

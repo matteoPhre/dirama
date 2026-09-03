@@ -33,11 +33,12 @@ export class PipelineExecutionError<T> extends Error {
   );
 }
 
-export class PipelineAbortError<T> extends PipelineExecutionError<T> {
+export class PipelineAbortError<T> extends PipelineExecutionError<T | undefined> {
   constructor(
-    pipelineMessage: T | undefined,
-    stageName: string | undefined,
+    message?: string,
     options?: ErrorOptions,
+    pipelineMessage?: T,
+    stageName?: string,
   );
 }
 ```
@@ -67,7 +68,8 @@ continue to work.
   inner `PipelineExecutionError`. Recursively following `cause` yields the
   full stage lineage without introducing a second public lineage format.
 - A standalone `SubPipeline` reports the stage inside it as its outermost
-  `stageName`.
+  `stageName`. If its `parentNext` rejects, the chain continues with a
+  pipeline-level error (`stageName: undefined`) as that stage's cause.
 
 ### Aborts
 
@@ -123,7 +125,8 @@ if (error instanceof PipelineExecutionError &&
 - Verify `onError` receives that structured error.
 - Verify nested filters create a cause chain containing outer and inner stage
   names.
-- Verify pipeline-level failures have no stage name.
+- Verify pipeline-level failures have no stage name and remain visible in the
+  `cause` chain when they return through a stage.
 - Verify pre-aborted and mid-run aborted pipelines reject with
   `PipelineAbortError`, preserve their abort reason, correctly expose an
   available or absent pipeline message, and are also instances of
